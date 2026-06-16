@@ -1,0 +1,12 @@
+freeflake:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      # The DuckDB database file stays on LOCAL disk — never on the SMB share
+      # (network file locking/mmap is unreliable). Only the Parquet data lives on the share.
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'warehouse.duckdb') }}"
+      threads: 4
+      extensions:
+        - parquet
+        - json

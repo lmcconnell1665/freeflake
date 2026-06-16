@@ -1,0 +1,10 @@
+python-quickbooks
+intuit-oauth
+prefect
+fastapi==0.115.8
+prefect-dbt
+pandas
+pyarrow
+python-dotenv
+duckdb
+dbt-duckdb

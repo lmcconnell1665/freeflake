@@ -1,0 +1,21 @@
+name: 'freeflake'
+version: '1.0.0'
+config-version: 2
+
+profile: 'freeflake'
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Silver and gold layers are written back to DATA_DIR as Parquet (external),
+# so the warehouse stays on the file share while DuckDB itself runs locally.
+models:
+  freeflake:
+    silver:
+      +materialized: external
+    gold:
+      +materialized: external

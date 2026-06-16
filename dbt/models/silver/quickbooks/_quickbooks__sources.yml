@@ -1,0 +1,22 @@
+version: 2
+
+sources:
+  - name: quickbooks
+    description: "Raw QuickBooks Online entities landed as Parquet in the bronze layer."
+    tables:
+      - name: customers
+        description: "Bronze QuickBooks customers; one row per record per ingest run."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/quickbooks/customers_*.parquet', union_by_name = true)"
+      - name: accounts
+        description: "Bronze QuickBooks chart of accounts; one row per record per ingest run."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/quickbooks/accounts_*.parquet', union_by_name = true)"
+      - name: invoices
+        description: "Bronze QuickBooks invoices; one row per record per ingest run."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/quickbooks/invoices_*.parquet', union_by_name = true)"
+      - name: payments
+        description: "Bronze QuickBooks payments; one row per record per ingest run."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/quickbooks/payments_*.parquet', union_by_name = true)"

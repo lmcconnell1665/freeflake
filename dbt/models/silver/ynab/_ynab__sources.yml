@@ -1,0 +1,26 @@
+version: 2
+
+sources:
+  - name: ynab
+    description: "Raw YNAB (You Need A Budget) entities landed as Parquet in the bronze layer; one set of files per budget per ingest run."
+    tables:
+      - name: accounts
+        description: "Bronze YNAB accounts; one row per account per budget per ingest run."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/ynab/*_accounts_*.parquet', union_by_name = true)"
+      - name: categories
+        description: "Bronze YNAB category groups; each row carries a nested JSON array of its categories."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/ynab/*_categories_*.parquet', union_by_name = true)"
+      - name: payees
+        description: "Bronze YNAB payees; one row per payee per budget per ingest run."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/ynab/*_payees_*.parquet', union_by_name = true)"
+      - name: transactions
+        description: "Bronze YNAB transactions; one row per transaction per budget per ingest run."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/ynab/*_transactions_*.parquet', union_by_name = true)"
+      - name: months
+        description: "Bronze YNAB monthly budget summaries; one row per month per budget per ingest run."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/ynab/*_months_*.parquet', union_by_name = true)"
