@@ -1,0 +1,29 @@
+# Prefect deployment config for the freeflake pipeline.
+# Deploy with `make deploy` (requires `prefect cloud login` first).
+#
+# Execution model: Prefect Cloud holds the deployment + schedule and queues runs
+# onto the `freeflake-process-pool` work pool. A `process` worker running on the
+# Linux server pulls each run, clones this repo fresh, and runs the flow in-process.
+# Secrets and paths (DATA_DIR, DBT_DUCKDB_PATH, YNAB_TOKEN, QB_*) come from the
+# worker's own environment, so set them where the worker is started (see the
+# systemd EnvironmentFile in the README/setup notes), NOT from a committed .env.
+
+name: freeflake
+prefect-version: 3.7.4
+
+# Pulled by the worker at the start of every flow run.
+pull:
+  - prefect.deployments.steps.git_clone:
+      repository: git@github.com:lmcconnell1665/freeflake.git
+      branch: main
+
+deployments:
+  - name: freeflake-pipeline
+    entrypoint: flows/pipeline.py:freeflake_pipeline
+    description: "Ingest QuickBooks + YNAB to bronze, then dbt build silver/gold."
+    work_pool:
+      name: freeflake-process-pool
+    schedules:
+      - cron: "0 6 * * *"
+        timezone: America/New_York
+        active: true
