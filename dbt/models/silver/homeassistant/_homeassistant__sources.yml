@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: homeassistant
+    description: "Raw Home Assistant entity state history landed as Parquet in the bronze layer; one file per entity per ingest run, with overlapping state records deduped downstream."
+    tables:
+      - name: states
+        description: "Bronze Home Assistant state history; one row per state report per entity per ingest run."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/homeassistant/*.parquet', union_by_name = true)"
