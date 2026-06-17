@@ -93,6 +93,35 @@ def ingest_entity(
     return data.get("server_knowledge", last_knowledge)
 
 
+@task(cache_policy=NO_CACHE)
+def ingest_category_months(
+    budget_id: str,
+    client: httpx.Client,
+    run_ts: str,
+) -> None:
+    # Per-category, per-month balances are only exposed by YNAB's single-month
+    # detail endpoint -- the months *list* returns summaries with no category
+    # breakdown. There's no last_knowledge_of_server delta support here, so we
+    # re-fetch every (non-deleted) month each run; silver dedupes to the latest.
+    resp = client.get(f"/plans/{budget_id}/months")
+    resp.raise_for_status()
+    months = resp.json()["data"]["months"]
+
+    records = []
+    for month in months:
+        if month.get("deleted"):
+            continue
+        month_date = month["month"]
+        detail = client.get(f"/plans/{budget_id}/months/{month_date}")
+        detail.raise_for_status()
+        for category in detail.json()["data"]["month"]["categories"]:
+            row = dict(category)
+            row["_month"] = month_date
+            records.append(row)
+
+    save_parquet(records, budget_id, "category_months", run_ts)
+
+
 # flow
 @flow(name="ynab-ingest")
 def ynab_ingest():
@@ -117,6 +146,8 @@ def ynab_ingest():
                 budget_marks.get(entity_name),
                 run_ts,
             )
+        # category-month balances have no delta support; fetched in full.
+        ingest_category_months(budget_id, client, run_ts)
         watermarks[budget_id] = new_marks
 
     save_watermarks(WATERMARK_BLOCK, watermarks)

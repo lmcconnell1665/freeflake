@@ -19,3 +19,10 @@ models:
       +materialized: external
     gold:
       +materialized: external
+
+# Hand-maintained reference data loaded into the local DuckDB file (not the
+# share). Month columns use ISO-date headers, so quote_columns keeps the
+# generated DDL valid.
+seeds:
+  freeflake:
+    +quote_columns: true

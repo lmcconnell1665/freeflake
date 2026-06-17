@@ -28,3 +28,7 @@ sources:
         description: "Bronze YNAB monthly budget summaries; one row per month per budget per ingest run."
         meta:
           external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/ynab/*_months_*.parquet', union_by_name = true)"
+      - name: category_months
+        description: "Bronze YNAB per-category month detail; one row per category per month per budget per ingest run (from the single-month detail endpoint)."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/ynab/*_category_months_*.parquet', union_by_name = true)"

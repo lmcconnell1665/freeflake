@@ -1,11 +1,16 @@
-{{ config(location=external_location('gold', 'finance/income')) }}
+{{ config(location=external_location('gold', 'finance/expenses')) }}
 
--- Income mart: one row per income (Inflow) transaction, with budget and payee
--- names resolved. YNAB records inflows against an "Inflow: Ready to Assign"
--- category, so we filter to category names containing "Inflow".
+-- Expenses mart: one row per outflow (spending) transaction, with budget,
+-- category group, category and payee names resolved. This is the mirror of the
+-- income mart -- we exclude YNAB's "Inflow" categories so only real spending
+-- remains.
 --
--- Blue-flagged transactions are excluded by convention (used to mark transfers /
--- reimbursements that shouldn't count as real income).
+-- Amounts are flipped to positive: YNAB stores outflows as negatives (already
+-- converted from milliunits in silver), so we multiply by -1 to express spend
+-- as a positive number.
+--
+-- Hidden categories and blue-flagged transactions are excluded by convention
+-- (blue flags mark transfers / reimbursements that shouldn't count as spend).
 
 with transactions as (
     select * from {{ ref('silver_ynab__transactions') }}
@@ -25,9 +30,11 @@ payees as (
 
 select
     b.budget_name           as budget,
+    c.category_group_name   as category_group,
+    c.category_name         as category,
     p.payee_name            as payee,
     t.transaction_date      as date,
-    t.amount                as amount,
+    t.amount * -1           as amount,
     t.category_id           as category_id,
     t.payee_id              as payee_id
 from transactions t
@@ -39,7 +46,8 @@ join budgets b
 join payees p
     on  t.budget_id = p.budget_id
     and t.payee_id  = p.payee_id
-where c.category_name like '%Inflow%'
+where c.category_name not like '%Inflow%'
+  and not coalesce(c.is_hidden, false)
   and coalesce(t.flag_color, '') <> 'blue'
   and t.transaction_date >= date '2025-01-01'
   and not coalesce(t.is_deleted, false)

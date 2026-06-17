@@ -28,3 +28,210 @@ models:
           - not_null
       - name: payee_id
         description: "YNAB payee id."
+
+  - name: gold_finance__expenses
+    description: >
+      Personal-finance expenses mart. One row per YNAB outflow transaction
+      since 2025-01-01, excluding inflow ("Inflow") categories, hidden
+      categories, and blue-flagged and deleted transactions. Amounts are
+      expressed as positive spend. Budget, category group, category and payee
+      names are resolved from their silver dimensions.
+    columns:
+      - name: budget
+        description: "Budget name (from silver_ynab__budgets)."
+        tests:
+          - not_null
+      - name: category_group
+        description: "Category group name (from silver_ynab__categories)."
+      - name: category
+        description: "Category name (from silver_ynab__categories)."
+      - name: payee
+        description: "Payee name (from silver_ynab__payees)."
+      - name: date
+        description: "Transaction date."
+        tests:
+          - not_null
+      - name: amount
+        description: "Spend amount in currency units, expressed positive (outflows flipped from negative)."
+        tests:
+          - not_null
+      - name: category_id
+        description: "YNAB category id."
+        tests:
+          - not_null
+      - name: payee_id
+        description: "YNAB payee id."
+
+  - name: gold_finance__net_worth
+    description: >
+      Personal-finance net worth mart. One row per open account per month, from
+      each account's first activity through the current month, carrying the
+      running balance forward across months with no transactions (dense month
+      spine). Account, budget names and balances are resolved from their silver
+      dimensions.
+    columns:
+      - name: account
+        description: "Account name (from silver_ynab__accounts)."
+        tests:
+          - not_null
+      - name: account_type
+        description: "Account type (e.g. checking, savings)."
+      - name: account_note
+        description: "Free-text account note."
+      - name: budget
+        description: "Budget name (from silver_ynab__budgets)."
+        tests:
+          - not_null
+      - name: year_month
+        description: "First day of the month for this balance snapshot."
+        tests:
+          - not_null
+      - name: balance
+        description: "Running account balance in currency units as of the month end."
+        tests:
+          - not_null
+
+  - name: gold_finance__savings_balance
+    description: >
+      Personal-finance savings mart. Month-over-month assigned balance for the
+      "Savings" category across all budgets, plus every category in the "Joint
+      Accounts" budget (excluding "Inflow: Ready to Assign"). amount is the YNAB
+      category balance for the month; amount_delta is the change versus the prior
+      month for the same budget + category.
+    columns:
+      - name: category_name
+        description: "Category name (from silver_ynab__category_months)."
+        tests:
+          - not_null
+      - name: account_name
+        description: "Budget name (from silver_ynab__budgets), used as the account label."
+      - name: budget_month
+        description: "First day of the budget month."
+        tests:
+          - not_null
+      - name: amount
+        description: "Assigned category balance for the month, in currency units."
+        tests:
+          - not_null
+      - name: amount_delta
+        description: "Change in assigned balance versus the prior month for the same budget + category."
+        tests:
+          - not_null
+
+  - name: gold_finance__budget
+    description: >
+      Personal-finance budget mart. Planned budget amount per budget + category
+      + month, from the hand-maintained finance_budget_2026 seed (unpivoted in
+      silver_ynab__budget_targets). Budget and category names are resolved from
+      their silver dimensions to match the income / expenses marts.
+    columns:
+      - name: budget
+        description: "Budget name (from silver_ynab__budgets)."
+      - name: category_group
+        description: "Category group name (from silver_ynab__categories)."
+      - name: category
+        description: "Category name (from silver_ynab__categories)."
+      - name: budget_month
+        description: "First day of the budget month."
+        tests:
+          - not_null
+      - name: budget_amount
+        description: "Planned amount for the month in currency units."
+        tests:
+          - not_null
+      - name: budget_id
+        description: "YNAB budget id."
+        tests:
+          - not_null
+      - name: category_id
+        description: "YNAB category id."
+        tests:
+          - not_null
+
+  - name: gold_finance__categories
+    description: "Category dimension: YNAB category id and name only, for joining / labeling in BI."
+    columns:
+      - name: category_id
+        description: "YNAB category id."
+        tests:
+          - not_null
+      - name: category_name
+        description: "Category name."
+
+  - name: gold_finance__category_groups
+    description: "Category group dimension: YNAB category group id and name only, for joining / labeling in BI."
+    columns:
+      - name: category_group_id
+        description: "YNAB category group id."
+        tests:
+          - not_null
+      - name: category_group_name
+        description: "Category group name."
+
+  - name: gold_finance__payees
+    description: "Payee dimension: YNAB payee id and name only, for joining / labeling in BI."
+    columns:
+      - name: payee_id
+        description: "YNAB payee id."
+        tests:
+          - not_null
+      - name: payee_name
+        description: "Payee name."
+
+  - name: gold_finance__plans
+    description: >
+      Plan dimension: the YNAB budgets entity, exposed as "plans" to avoid
+      clashing with the budget-amount mart (gold_finance__budget). One row per
+      YNAB budget, with its active month range.
+    columns:
+      - name: plan_id
+        description: "YNAB budget id."
+        tests:
+          - not_null
+          - unique
+      - name: plan_name
+        description: "YNAB budget (plan) name."
+      - name: first_month
+        description: "First month covered by the plan."
+      - name: last_month
+        description: "Last month covered by the plan."
+
+  - name: gold_finance__dates
+    description: >
+      Date dimension: one row per calendar day from 2025-01-01 through the last
+      day of the current year. Generated, not sourced. Facts join on the date
+      column.
+    columns:
+      - name: date
+        description: "Calendar day (grain)."
+        tests:
+          - not_null
+          - unique
+      - name: year
+        description: "Calendar year."
+      - name: month
+        description: "Month number (1-12)."
+      - name: day
+        description: "Day of month (1-31)."
+      - name: month_name
+        description: "Full month name (e.g. January)."
+      - name: quarter
+        description: "Calendar quarter (1-4)."
+      - name: day_of_year
+        description: "Day of year (1-366)."
+      - name: week_of_year
+        description: "ISO week of year (1-53)."
+      - name: day_of_week_number
+        description: "Day of week: Sunday = 0 ... Saturday = 6."
+      - name: day_of_week_name
+        description: "Full weekday name (e.g. Monday)."
+      - name: is_weekend
+        description: "True for Saturday and Sunday."
+      - name: is_last_day_of_month
+        description: "True when the date is the last day of its month."
+      - name: first_day_of_month
+        description: "First day of the date's month."
+      - name: last_day_of_month
+        description: "Last day of the date's month."
+      - name: month_year
+        description: "Year-month label, formatted YYYY-MM."

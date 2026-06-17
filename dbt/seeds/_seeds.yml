@@ -1,0 +1,19 @@
+version: 2
+
+seeds:
+  - name: finance_budget_2026
+    description: >
+      Hand-maintained 2026 budget plan, exported from the YNAB budget workbook
+      and cleaned into tidy form. Wide layout: one row per budget + category,
+      one column per budget month (ISO-date header), value is the planned
+      amount in whole currency units. Empty cells mean no amount was planned
+      for that month. Unpivoted into long form by silver_ynab__budget_targets.
+    columns:
+      - name: budget_id
+        description: "YNAB budget id this plan row belongs to."
+        tests:
+          - not_null
+      - name: category_id
+        description: "YNAB category id this plan row applies to."
+        tests:
+          - not_null
