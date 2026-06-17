@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: gold_finance__income
+    description: >
+      Personal-finance income mart. One row per YNAB inflow transaction
+      (category name contains "Inflow") since 2025-01-01, excluding blue-flagged
+      and deleted transactions. Budget and payee names are resolved from their
+      silver dimensions.
+    columns:
+      - name: budget
+        description: "Budget name (from silver_ynab__budgets)."
+        tests:
+          - not_null
+      - name: payee
+        description: "Payee name (from silver_ynab__payees)."
+      - name: date
+        description: "Transaction date."
+        tests:
+          - not_null
+      - name: amount
+        description: "Inflow amount in currency units (already converted from YNAB milliunits in silver)."
+        tests:
+          - not_null
+      - name: category_id
+        description: "YNAB category id of the inflow category."
+        tests:
+          - not_null
+      - name: payee_id
+        description: "YNAB payee id."

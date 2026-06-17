@@ -4,6 +4,10 @@ sources:
   - name: ynab
     description: "Raw YNAB (You Need A Budget) entities landed as Parquet in the bronze layer; one set of files per budget per ingest run."
     tables:
+      - name: budgets
+        description: "Bronze YNAB budget summaries; one row per budget per ingest run. Sole source of the budget name."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/ynab/*_budgets_*.parquet', union_by_name = true)"
       - name: accounts
         description: "Bronze YNAB accounts; one row per account per budget per ingest run."
         meta:

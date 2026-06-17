@@ -106,6 +106,7 @@ def ynab_ingest():
     for budget in budgets:
         budget_id = budget["id"]
         print(f"Budget: {budget.get('name', budget_id)}")
+        save_parquet([budget], budget_id, "budgets", run_ts)
         budget_marks = watermarks.get(budget_id, {})
         new_marks = dict(budget_marks)
         for entity_name in ENTITIES:
