@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: early
+    description: "Raw Early (Timeular) time-tracking data landed as Parquet in the bronze layer; the full history is re-dumped each run and deduped by id downstream, since the API has no modified-since cursor."
+    tables:
+      - name: activities
+        description: "Bronze Early activities; full snapshot per ingest run."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/early/activities_*.parquet', union_by_name = true)"
+      - name: time_entries
+        description: "Bronze Early time entries; full history snapshot per ingest run, one row per entry per run."
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_DIR') }}/bronze/early/time_entries_*.parquet', union_by_name = true)"

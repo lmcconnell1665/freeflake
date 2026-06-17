@@ -3,6 +3,7 @@ from prefect import flow
 from flows.ingest.quickbooks import quickbooks_ingest
 from flows.ingest.ynab import ynab_ingest
 from flows.ingest.homeassistant import homeassistant_ingest
+from flows.ingest.early import early_ingest
 from flows.transform.dbt import dbt_build
 
 
@@ -12,6 +13,7 @@ def freeflake_pipeline():
     quickbooks_ingest()
     ynab_ingest()
     homeassistant_ingest()
+    early_ingest()
     dbt_build()
 
 
