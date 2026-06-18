@@ -14,6 +14,3 @@ dbt-run:
 pipeline:
 	python -m flows.pipeline
 
-# Deploy to Prefect Cloud (reads prefect.yaml). Run `prefect cloud login` first.
-deploy:
-	prefect deploy --all

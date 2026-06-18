@@ -43,43 +43,60 @@ make pipeline
 Output Parquet lands under `DATA_DIR/silver/...` and `DATA_DIR/gold/...`; the DuckDB file
 (`warehouse.duckdb`) stays local.
 
-## 4. Run it on a schedule via self-hosted Prefect
+## 4. Run scheduled via self-hosted Prefect (Docker)
 
-This uses the free, open-source Prefect server (no Prefect Cloud). The server holds the
-schedule (daily at 6am ET) and queues runs onto the `freeflake-process-pool` work pool. A
-local worker picks up each run, clones the repo fresh, and executes the flow.
+Prefect runs only in Docker. The same `docker compose up` stack — Postgres + the free,
+open-source Prefect server + an in-process worker — runs on your **laptop** (to dev/test)
+and on the **sandbox** (for real). The only difference is two values in `.env`. Every run
+clones `main` fresh (the `git_clone` step in `prefect.yaml`), so the box always runs
+exactly what's pushed — you never edit code on it.
 
-**a. Start the Prefect server** (leave running in its own terminal; serves the UI at
-http://127.0.0.1:4200):
+### a. Set the two environment-specific values in `.env`
 
-```bash
-prefect server start
-```
+| var            | laptop                                       | sandbox            |
+| -------------- | -------------------------------------------- | ------------------ |
+| `DATA_DIR`     | `/Users/you/dev/freeflake/data`              | `/mnt/NeoNAS`      |
+| `SSH_KEY_PATH` | path to a deploy key                         | path to a deploy key |
 
-**b. Point the CLI/worker at the local server** (in your other terminals):
+`DATA_DIR` is the **host** folder where Parquet is written; Docker maps it to a fixed
+path inside the container, and `make pipeline` writes there directly. `SSH_KEY_PATH` is the
+absolute path to a private SSH key whose public half is added as a read-only
+[Deploy Key](https://github.com/lmcconnell1665/freeflake/settings/keys) on the repo
+(needed for the `git_clone` per-run). On the sandbox, mount the Windows share at
+`/mnt/NeoNAS` first (see below).
 
-```bash
-prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api
-```
+> DuckDB stays on **local disk** (a Docker volume), never on the share — network file
+> locking is unreliable. Only Parquet is written to `HOST_DATA_DIR`.
 
-**c. Create the deployment** (reads `prefect.yaml`):
-
-```bash
-make deploy
-```
-
-**d. Start a worker** to pull and execute runs (leave this running; on the prod Linux
-server this is a systemd service). It needs the `.env` values in its environment:
-
-```bash
-set -a && . ./.env && set +a
-prefect worker start --pool freeflake-process-pool
-```
-
-**e. Trigger a run now** (or just wait for the 6am schedule):
+### b. Bring it up (identical everywhere)
 
 ```bash
-prefect deployment run 'freeflake-pipeline/freeflake-pipeline'
+docker compose up -d --build                                    # start the stack
+docker compose exec worker prefect deploy --all                 # register deployment (once)
+docker compose logs -f worker                                   # tail runs
 ```
 
-Watch progress, logs, and run history in the Prefect UI at http://127.0.0.1:4200.
+UI at `http://localhost:4200` (laptop) / `http://<sandbox>:4200`. The worker auto-creates
+`freeflake-process-pool`; the deployment carries the daily 6am ET schedule.
+
+### c. Trigger a run
+
+```bash
+docker compose exec worker prefect deployment run 'freeflake-pipeline/freeflake-pipeline'
+```
+
+This re-clones `main`, so after `git push origin main` a manual trigger (or the 6am
+schedule) runs the new code. Reset state with `docker compose down -v`.
+
+### Mounting the NeoNAS share (sandbox only)
+
+```bash
+sudo mkdir -p /mnt/NeoNAS
+printf 'username=WINUSER\npassword=WINPASS\n' | sudo tee /etc/smb-neonas.creds >/dev/null
+sudo chmod 600 /etc/smb-neonas.creds
+
+# /etc/fstab — adjust //SERVER/Share to your actual host + share name:
+//NEONAS/DataWarehouse  /mnt/NeoNAS  cifs  credentials=/etc/smb-neonas.creds,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
+
+sudo mount -a
+```

@@ -1,0 +1,81 @@
+# Self-hosted Prefect (OSS, free) for the freeflake sandbox.
+#   docker compose up -d            start server + worker + postgres
+#   docker compose logs -f worker   tail flow runs
+#   docker compose down             stop (keeps data)
+#   docker compose down -v          stop + wipe postgres/duckdb (clean slate)
+#
+# Same on your laptop and the sandbox — only .env differs:
+#   - HOST_DATA_DIR  -> where bronze Parquet is written on the host.
+#       laptop:  HOST_DATA_DIR=./data        (a local folder)
+#       sandbox: HOST_DATA_DIR=/mnt/NeoNAS   (the mounted SMB share)
+#   - SSH_KEY_PATH   -> absolute path to the repo deploy key (git_clone).
+#   - QB_*, YNAB_TOKEN, HA_*, EARLY_* secrets.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: prefect
+      POSTGRES_PASSWORD: prefect
+      POSTGRES_DB: prefect
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prefect"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  prefect-server:
+    image: prefecthq/prefect:3-latest
+    command: prefect server start --host 0.0.0.0
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
+    ports:
+      - "4200:4200"   # UI at http://<linux-box>:4200
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    # Process worker: runs each flow in-process (your chosen model + matches
+    # freeflake-process-pool in prefect.yaml). It does NOT run the baked-in code
+    # directly — per prefect.yaml's git_clone pull step, every run clones the
+    # latest `main` fresh and runs that. Push to main -> next run picks it up.
+    command: >
+      sh -c "prefect work-pool create freeflake-process-pool --type process --overwrite >/dev/null 2>&1;
+             prefect worker start --pool freeflake-process-pool"
+    env_file:
+      - .env
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+      # Inside the container the code always writes to this fixed path; the host
+      # folder it maps to is set by DATA_DIR in .env (the volume below). Don't
+      # mirror the host path here -- Docker Desktop's VirtioFS EPERMs on deep
+      # /Users/... mount targets.
+      DATA_DIR: /data/warehouse
+      # DuckDB file stays on LOCAL disk (named volume) — never on the share.
+      DBT_DUCKDB_PATH: /data/duckdb/warehouse.duckdb
+      # Trust github.com on first connect so the git_clone step doesn't hang on
+      # host-key verification.
+      GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new"
+    volumes:
+      # Host DATA_DIR (from .env) -> fixed clean container path.
+      #   laptop:  DATA_DIR=/Users/you/dev/freeflake/data
+      #   sandbox: DATA_DIR=/mnt/NeoNAS
+      - ${DATA_DIR:?set DATA_DIR in .env to the host data folder}:/data/warehouse
+      - duckdb:/data/duckdb         # local-disk DuckDB, single writer
+      # Read-only deploy key so the worker can git_clone the private repo.
+      # Set SSH_KEY_PATH in .env to the ABSOLUTE path of the private key
+      # (compose does NOT expand ~). e.g. SSH_KEY_PATH=/home/you/.ssh/freeflake_deploy
+      - ${SSH_KEY_PATH:?set SSH_KEY_PATH to your deploy key's absolute path}:/root/.ssh/id_ed25519:ro
+    depends_on:
+      - prefect-server
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  duckdb:

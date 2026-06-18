@@ -1,3 +1,4 @@
+import os
 import json
 import logging
 from pathlib import Path
@@ -11,6 +12,12 @@ load_dotenv()
 # repo_root/dbt
 DBT_DIR = Path(__file__).resolve().parents[2] / "dbt"
 MANIFEST = DBT_DIR / "target" / "manifest.json"
+
+# Anchor the (throwaway) DuckDB scratch file to the dbt project dir. profiles.yml's
+# default path is relative, so it would otherwise follow the process cwd and land
+# wherever the flow happens to run from (e.g. the repo root). An explicit
+# DBT_DUCKDB_PATH (Docker sets one) still wins.
+os.environ.setdefault("DBT_DUCKDB_PATH", str(DBT_DIR / "warehouse.duckdb"))
 
 _settings = PrefectDbtSettings(
     project_dir=str(DBT_DIR),
