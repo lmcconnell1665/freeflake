@@ -21,23 +21,11 @@ RAW_DIR.mkdir(parents=True, exist_ok=True)
 BASE_URL = "https://api.ynab.com/v1"
 WATERMARK_BLOCK = "ynab-watermarks"
 
-# YNAB allows 200 requests/hour per token. The per-month detail endpoint (used
-# for category_months) has no delta support, so after a one-time full backfill we
-# only re-fetch the most recent N months each run -- closed months rarely change
-# and are already captured in earlier snapshots (silver dedupes to the latest).
-MONTHS_LOOKBACK = int(os.getenv("YNAB_MONTHS_LOOKBACK", "3"))
-# Marker stored in the per-budget watermarks once every month has been fetched.
-BACKFILL_MARK = "category_months_backfilled"
-
-# entity_name -> (url path segment, response data key)
-# all of these support delta requests via last_knowledge_of_server.
-ENTITIES = {
-    "accounts": ("accounts", "accounts"),
-    "categories": ("categories", "category_groups"),
-    "payees": ("payees", "payees"),
-    "transactions": ("transactions", "transactions"),
-    "months": ("months", "months"),
-}
+# The single budget-detail endpoint (/budgets/{id}) returns every entity --
+# accounts, payees, transactions, category_groups, categories, and months WITH
+# their per-category breakdowns -- in one response, and supports delta loads via
+# last_knowledge_of_server. So one call per budget replaces the old per-entity
+# calls plus the per-month detail loop, keeping us far under YNAB's 200 req/hour.
 
 
 # auth
@@ -48,12 +36,12 @@ def get_client() -> httpx.Client:
     return httpx.Client(
         base_url=BASE_URL,
         headers={"Authorization": f"Bearer {token}"},
-        timeout=60.0,
+        timeout=120.0,
     )
 
 
-# watermarks are stored as {budget_id: {entity: server_knowledge}}
-# via the shared helpers in flows.ingest.watermarks.
+# watermarks are stored as {budget_id: server_knowledge} via the shared helpers
+# in flows.ingest.watermarks.
 
 
 # helpers
@@ -82,7 +70,7 @@ def _get(client: httpx.Client, url: str, params: dict | None = None, max_retries
 
 
 def list_budgets(client: httpx.Client) -> list[dict]:
-    return _get(client, "/plans").json()["data"]["plans"]
+    return _get(client, "/budgets").json()["data"]["budgets"]
 
 
 def save_parquet(records: list, budget_id: str, entity: str, run_ts: str):
@@ -103,57 +91,50 @@ def save_parquet(records: list, budget_id: str, entity: str, run_ts: str):
 
 # tasks
 @task(cache_policy=NO_CACHE)
-def ingest_entity(
+def ingest_budget(
     budget_id: str,
-    entity_name: str,
     client: httpx.Client,
     last_knowledge: int | None,
     run_ts: str,
-) -> int | None:
-    url_path, data_key = ENTITIES[entity_name]
+) -> int:
+    """Pull the full budget in one call and split it into the bronze entities.
+
+    With last_knowledge_of_server set, each array is a delta -- it contains only
+    entities changed since the last run (empty arrays are simply skipped, and
+    silver keeps the prior snapshot). server_knowledge always comes back and is
+    returned as the new watermark.
+    """
     params = {}
     if last_knowledge is not None:
         params["last_knowledge_of_server"] = last_knowledge
 
-    data = _get(client, f"/plans/{budget_id}/{url_path}", params=params).json()["data"]
+    data = _get(client, f"/budgets/{budget_id}", params=params).json()["data"]
+    budget = data["budget"]
 
-    save_parquet(data[data_key], budget_id, entity_name, run_ts)
-    # advance the watermark; server_knowledge always comes back even on empty deltas.
-    return data.get("server_knowledge", last_knowledge)
+    save_parquet(budget.get("accounts", []), budget_id, "accounts", run_ts)
+    save_parquet(budget.get("payees", []), budget_id, "payees", run_ts)
+    save_parquet(budget.get("transactions", []), budget_id, "transactions", run_ts)
+    save_parquet(budget.get("category_groups", []), budget_id, "category_groups", run_ts)
+    save_parquet(budget.get("categories", []), budget_id, "categories", run_ts)
 
+    months = budget.get("months", [])
+    # Month summaries without the nested per-category breakdown (that lands in
+    # category_months below).
+    summaries = [{k: v for k, v in m.items() if k != "categories"} for m in months]
+    save_parquet(summaries, budget_id, "months", run_ts)
 
-@task(cache_policy=NO_CACHE)
-def ingest_category_months(
-    budget_id: str,
-    client: httpx.Client,
-    run_ts: str,
-    full_backfill: bool,
-) -> None:
-    # Per-category, per-month balances are only exposed by YNAB's single-month
-    # detail endpoint -- the months *list* returns summaries with no category
-    # breakdown. There's no last_knowledge_of_server delta support here, so each
-    # month costs one request. To stay under YNAB's 200 req/hour limit we fetch
-    # every month only on the first run (full_backfill); afterwards just the most
-    # recent MONTHS_LOOKBACK. Older closed months are already captured in earlier
-    # snapshots and silver dedupes to the latest.
-    months = _get(client, f"/plans/{budget_id}/months").json()["data"]["months"]
-
-    active = sorted(
-        (m for m in months if not m.get("deleted")), key=lambda m: m["month"]
-    )
-    if not full_backfill:
-        active = active[-MONTHS_LOOKBACK:]
-
-    records = []
-    for month in active:
-        month_date = month["month"]
-        detail = _get(client, f"/plans/{budget_id}/months/{month_date}")
-        for category in detail.json()["data"]["month"]["categories"]:
+    # One row per category per (changed) month; carry the month it belongs to.
+    category_months = []
+    for month in months:
+        for category in month.get("categories", []):
             row = dict(category)
-            row["_month"] = month_date
-            records.append(row)
+            row["_month"] = month["month"]
+            category_months.append(row)
+    # Entity name "categorymonths" (not "category_months") so its files don't get
+    # picked up by the months source glob (*_months_* would otherwise match).
+    save_parquet(category_months, budget_id, "categorymonths", run_ts)
 
-    save_parquet(records, budget_id, "category_months", run_ts)
+    return data["server_knowledge"]
 
 
 # flow
@@ -170,22 +151,11 @@ def ynab_ingest():
         budget_id = budget["id"]
         print(f"Budget: {budget.get('name', budget_id)}")
         save_parquet([budget], budget_id, "budgets", run_ts)
-        budget_marks = watermarks.get(budget_id, {})
-        new_marks = dict(budget_marks)
-        for entity_name in ENTITIES:
-            new_marks[entity_name] = ingest_entity(
-                budget_id,
-                entity_name,
-                client,
-                budget_marks.get(entity_name),
-                run_ts,
-            )
-        # category-month balances have no delta support: full fetch once, then
-        # only the recent window on later runs.
-        full_backfill = not budget_marks.get(BACKFILL_MARK, False)
-        ingest_category_months(budget_id, client, run_ts, full_backfill)
-        new_marks[BACKFILL_MARK] = True
-        watermarks[budget_id] = new_marks
+        # Old watermarks were a per-entity dict; a non-int means "no usable
+        # watermark" → full load, which the budget endpoint does in one call.
+        prev = watermarks.get(budget_id)
+        last_knowledge = prev if isinstance(prev, int) else None
+        watermarks[budget_id] = ingest_budget(budget_id, client, last_knowledge, run_ts)
 
     save_watermarks(WATERMARK_BLOCK, watermarks)
     client.close()

@@ -1,11 +1,11 @@
 {{ config(location=external_location('silver', 'ynab/category_groups')) }}
 
 with source as (
-    select * from {{ source('ynab', 'categories') }}
+    select * from {{ source('ynab', 'category_groups') }}
 ),
 
--- The categories endpoint returns category groups; each row is one group.
--- Bronze accumulates one row per record per ingest run; keep the newest version of each group.
+-- Bronze accumulates one row per group per ingest run (delta loads only write
+-- changed groups); keep the newest version of each group.
 latest as (
     select *
     from source
