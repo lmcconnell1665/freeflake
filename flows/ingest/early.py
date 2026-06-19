@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 import httpx
@@ -12,10 +12,9 @@ load_dotenv()
 
 RAW_DIR = bronze_dir("early")
 BASE_URL = "https://api.early.app/api/v4"
-# Early can only filter time entries by occurrence (no modified-since cursor), so
-# each run re-dumps full history from before the product existed and silver dedupes.
+# No modified-since cursor, so each run re-dumps full history (from before the
+# product existed) in one ranged call and silver dedupes by id.
 EPOCH = datetime(2015, 1, 1, tzinfo=timezone.utc)
-CHUNK_DAYS = 90
 API_DT = "%Y-%m-%dT%H:%M:%S.000"
 
 
@@ -59,18 +58,10 @@ def ingest_activities(client: httpx.Client, run_ts: str):
 
 @task(cache_policy=NO_CACHE)
 def ingest_time_entries(client: httpx.Client, run_ts: str):
-    start = EPOCH
     now = datetime.now(timezone.utc)
-    entries = []
-    while start < now:
-        end = min(start + timedelta(days=CHUNK_DAYS), now)
-        resp = client.get(f"/time-entries/{start.strftime(API_DT)}/{end.strftime(API_DT)}")
-        resp.raise_for_status()
-        entries.extend(resp.json()["timeEntries"])
-        start = end
-    # Entries on a chunk boundary appear in both windows — dedupe, last wins.
-    entries = list({e["id"]: e for e in entries}.values())
-    write_parquet(RAW_DIR, entries, "time_entries", run_ts)
+    resp = client.get(f"/time-entries/{EPOCH.strftime(API_DT)}/{now.strftime(API_DT)}")
+    resp.raise_for_status()
+    write_parquet(RAW_DIR, resp.json()["timeEntries"], "time_entries", run_ts)
 
 
 @flow(name="early-ingest")
