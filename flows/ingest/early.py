@@ -1,38 +1,29 @@
 import os
-import json
-import pandas as pd
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from dotenv import load_dotenv
 
 import httpx
 from prefect import flow, task
 from prefect.cache_policies import NO_CACHE
 
+from flows.ingest.bronze import bronze_dir, write_parquet
+
 load_dotenv()
 
-# config
-RAW_DIR = Path(os.getenv("DATA_DIR")) / "bronze" / "early"
-RAW_DIR.mkdir(parents=True, exist_ok=True)
-
+RAW_DIR = bronze_dir("early")
 BASE_URL = "https://api.early.app/api/v4"
-# Early's API can only filter time entries by when they occurred — there is no
-# "modified since" cursor — so each run re-dumps the full history and silver
-# dedupes by id. We sweep from before the product existed (Timeular launched
-# ~2015) to now, so every entry is always captured; CHUNK_DAYS keeps each
-# response small.
+# Early can only filter time entries by occurrence (no modified-since cursor), so
+# each run re-dumps full history from before the product existed and silver dedupes.
 EPOCH = datetime(2015, 1, 1, tzinfo=timezone.utc)
 CHUNK_DAYS = 90
-API_DT = "%Y-%m-%dT%H:%M:%S.000"  # Early wants millisecond ISO, no timezone
+API_DT = "%Y-%m-%dT%H:%M:%S.000"
 
 
-# auth
 def get_client() -> httpx.Client:
     key, secret = os.getenv("EARLY_API_KEY"), os.getenv("EARLY_API_SECRET")
     if not (key and secret):
         raise RuntimeError("EARLY_API_KEY and EARLY_API_SECRET must be set")
-    # Sign-in is stateless: key+secret exchange for a short-lived bearer token,
-    # so we just mint a fresh one each run rather than caching it.
+    # key+secret exchange for a short-lived bearer token; mint a fresh one each run.
     resp = httpx.post(
         f"{BASE_URL}/developer/sign-in",
         json={"apiKey": key, "apiSecret": secret},
@@ -47,30 +38,12 @@ def get_client() -> httpx.Client:
     )
 
 
-# helpers
-def save_parquet(records: list, entity: str, run_ts: str):
-    if not records:
-        return
-    df = pd.DataFrame(records)
-    nested = [
-        c for c in df.columns if df[c].map(lambda v: isinstance(v, (dict, list))).any()
-    ]
-    for c in nested:
-        df[c] = df[c].map(lambda v: json.dumps(v) if isinstance(v, (dict, list)) else v)
-    df["_ingested_at"] = run_ts
-    path = RAW_DIR / f"{entity}_{run_ts}.parquet"
-    df.to_parquet(path, index=False)
-    print(f"  ✓ {entity}: {len(df)} records → {path.name}")
-
-
-# tasks
 @task(cache_policy=NO_CACHE)
 def ingest_activities(client: httpx.Client, run_ts: str):
     resp = client.get("/activities")
     resp.raise_for_status()
     data = resp.json()
-    # /activities splits results across three buckets; archived/inactive ones are
-    # still referenced by historical time entries, so keep them all and tag status.
+    # Archived/inactive activities are still referenced by old time entries — keep all.
     statuses = {
         "activities": "active",
         "inactiveActivities": "inactive",
@@ -81,7 +54,7 @@ def ingest_activities(client: httpx.Client, run_ts: str):
         for key, status in statuses.items()
         for a in data.get(key, [])
     ]
-    save_parquet(records, "activities", run_ts)
+    write_parquet(RAW_DIR, records, "activities", run_ts)
 
 
 @task(cache_policy=NO_CACHE)
@@ -95,12 +68,11 @@ def ingest_time_entries(client: httpx.Client, run_ts: str):
         resp.raise_for_status()
         entries.extend(resp.json()["timeEntries"])
         start = end
-    # Entries overlapping a chunk boundary come back in both windows — last wins.
+    # Entries on a chunk boundary appear in both windows — dedupe, last wins.
     entries = list({e["id"]: e for e in entries}.values())
-    save_parquet(entries, "time_entries", run_ts)
+    write_parquet(RAW_DIR, entries, "time_entries", run_ts)
 
 
-# flow
 @flow(name="early-ingest")
 def early_ingest():
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

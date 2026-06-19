@@ -4,7 +4,6 @@ with source as (
     select * from {{ source('ynab', 'payees') }}
 ),
 
--- Bronze accumulates one row per record per ingest run; keep the newest version of each payee.
 latest as (
     select *
     from source

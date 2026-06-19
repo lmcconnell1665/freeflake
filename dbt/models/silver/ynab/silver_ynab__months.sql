@@ -4,7 +4,6 @@ with source as (
     select * from {{ source('ynab', 'months') }}
 ),
 
--- Bronze accumulates one row per record per ingest run; keep the newest version of each month.
 latest as (
     select *
     from source

@@ -4,8 +4,6 @@ with source as (
     select * from {{ source('ynab', 'category_groups') }}
 ),
 
--- Bronze accumulates one row per group per ingest run (delta loads only write
--- changed groups); keep the newest version of each group.
 latest as (
     select *
     from source

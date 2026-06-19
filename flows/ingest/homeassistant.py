@@ -1,8 +1,6 @@
 import os
 import json
-import pandas as pd
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from urllib.parse import quote
 from dotenv import load_dotenv
 
@@ -10,23 +8,19 @@ import httpx
 from prefect import flow, task
 from prefect.cache_policies import NO_CACHE
 
+from flows.ingest.bronze import bronze_dir, write_parquet
 from flows.ingest.watermarks import load_watermarks, save_watermarks
 
 load_dotenv()
 
-# config
-RAW_DIR = Path(os.getenv("DATA_DIR")) / "bronze" / "homeassistant"
-RAW_DIR.mkdir(parents=True, exist_ok=True)
-
+RAW_DIR = bronze_dir("homeassistant")
 BASE_URL = os.getenv("HA_URL", "http://home.mcc:8123")
 WATERMARK_BLOCK = "ha-watermarks"
 LABEL = "logged"
-# Cap first-run / long-gap backfills. HA's recorder only keeps ~10 days by
-# default, so reaching further back just returns nothing useful anyway.
+# HA's recorder only keeps ~10 days, so reaching further back returns nothing useful.
 MAX_LOOKBACK_DAYS = 30
 
 
-# auth
 def get_client() -> httpx.Client:
     token = os.getenv("HA_TOKEN")
     if not token:
@@ -38,12 +32,6 @@ def get_client() -> httpx.Client:
     )
 
 
-# watermarks are stored as {entity_id: last_updated_iso} via the shared
-# helpers in flows.ingest.watermarks — each entity tracked independently so a
-# noisy sensor never holds back a quiet one.
-
-
-# helpers
 def list_entities(client: httpx.Client, label: str) -> list[str]:
     """Resolve all entity ids carrying `label` via HA's template API."""
     resp = client.post(
@@ -54,22 +42,6 @@ def list_entities(client: httpx.Client, label: str) -> list[str]:
     return json.loads(resp.text)
 
 
-def save_parquet(records: list, entity_id: str, run_ts: str):
-    if not records:
-        return
-    df = pd.DataFrame(records)
-    nested = [
-        c for c in df.columns if df[c].map(lambda v: isinstance(v, (dict, list))).any()
-    ]
-    for c in nested:
-        df[c] = df[c].map(lambda v: json.dumps(v) if isinstance(v, (dict, list)) else v)
-    df["_ingested_at"] = run_ts
-    path = RAW_DIR / f"{entity_id.replace('.', '_')}_{run_ts}.parquet"
-    df.to_parquet(path, index=False)
-    print(f"  ✓ {entity_id}: {len(df)} records → {path.name}")
-
-
-# tasks
 @task(cache_policy=NO_CACHE)
 def ingest_entity(
     entity_id: str, client: httpx.Client, start: str, end: str, run_ts: str
@@ -81,17 +53,13 @@ def ingest_entity(
     )
     resp.raise_for_status()
     history = resp.json()
-    # History comes back as one list per requested entity; we request just one.
     events = history[0] if history else []
-
-    save_parquet(events, entity_id, run_ts)
-    # Advance to the newest event seen so the next run resumes from there;
-    # if nothing changed, keep `start` so a long idle period still moves on.
+    write_parquet(RAW_DIR, events, entity_id.replace(".", "_"), run_ts)
+    # Resume from the newest event; if none, keep `start` so idle periods advance.
     times = [e["last_updated"] for e in events if e.get("last_updated")]
     return max(times) if times else start
 
 
-# flow
 @flow(name="homeassistant-ingest")
 def homeassistant_ingest():
     now = datetime.now(timezone.utc)
@@ -107,8 +75,7 @@ def homeassistant_ingest():
 
     new_watermarks = {}
     for entity_id in entities:
-        # Resume from the watermark, but never reach past the lookback floor —
-        # this is what lets a missed run catch up without an unbounded backfill.
+        # Resume from the watermark but never past the floor — bounds a catch-up backfill.
         last = watermarks.get(entity_id)
         start = max(last, floor) if last else floor
         new_watermarks[entity_id] = ingest_entity(entity_id, client, start, end, run_ts)

@@ -4,7 +4,6 @@ with source as (
     select * from {{ source('quickbooks', 'invoices') }}
 ),
 
--- Bronze accumulates one row per record per ingest run; keep the newest version of each invoice.
 latest as (
     select *
     from source

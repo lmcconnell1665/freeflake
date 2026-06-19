@@ -4,7 +4,6 @@ with source as (
     select * from {{ source('early', 'activities') }}
 ),
 
--- Full snapshot every run; keep the newest version of each activity.
 latest as (
     select *
     from source

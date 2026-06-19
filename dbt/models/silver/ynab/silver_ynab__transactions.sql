@@ -4,16 +4,13 @@ with source as (
     select * from {{ source('ynab', 'transactions') }}
 ),
 
--- Bronze accumulates one row per record per ingest run; keep the newest version of each transaction.
 latest as (
     select *
     from source
     qualify row_number() over (partition by _budget_id, id order by _ingested_at desc) = 1
 ),
 
--- The budget-detail transactions array is the "summary" shape: it carries the
--- foreign-key ids but not the denormalized names (account/payee/category) nor
--- flag_name. Join the names from the dimension models (single source of truth).
+-- The budget-detail transactions array carries FK ids but not the names; join them.
 accounts as (
     select budget_id, account_id, account_name from {{ ref('silver_ynab__accounts') }}
 ),

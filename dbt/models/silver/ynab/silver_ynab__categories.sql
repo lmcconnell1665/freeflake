@@ -4,16 +4,13 @@ with source as (
     select * from {{ source('ynab', 'categories') }}
 ),
 
--- Bronze accumulates one flat row per category per ingest run (delta loads only
--- write changed categories); keep the newest version of each category.
 latest as (
     select *
     from source
     qualify row_number() over (partition by _budget_id, id order by _ingested_at desc) = 1
 ),
 
--- The flat category row carries category_group_id but not the group name, so
--- join it from the groups model.
+-- Flat category rows carry category_group_id but not the group name.
 groups as (
     select budget_id, category_group_id, category_group_name
     from {{ ref('silver_ynab__category_groups') }}

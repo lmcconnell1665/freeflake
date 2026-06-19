@@ -9,14 +9,11 @@ from prefect_dbt import PrefectDbtRunner, PrefectDbtSettings
 
 load_dotenv()
 
-# repo_root/dbt
 DBT_DIR = Path(__file__).resolve().parents[2] / "dbt"
 MANIFEST = DBT_DIR / "target" / "manifest.json"
 
-# Anchor the (throwaway) DuckDB scratch file to the dbt project dir. profiles.yml's
-# default path is relative, so it would otherwise follow the process cwd and land
-# wherever the flow happens to run from (e.g. the repo root). An explicit
-# DBT_DUCKDB_PATH (Docker sets one) still wins.
+# Anchor the scratch DuckDB file to the project dir (profiles.yml's relative path
+# otherwise follows cwd). Docker's explicit DBT_DUCKDB_PATH still wins.
 os.environ.setdefault("DBT_DUCKDB_PATH", str(DBT_DIR / "warehouse.duckdb"))
 
 _settings = PrefectDbtSettings(
@@ -35,58 +32,34 @@ def _logger():
 
 
 def ensure_external_dirs() -> list[str]:
-    """Pre-create the parent directory of every external model's output.
+    """Pre-create each external model's output dir (DuckDB's COPY won't make them).
 
-    DuckDB's `COPY ... TO 'file.parquet'` does not create missing parent
-    directories, so the first run of a new silver source or gold mart fails with
-    an IO error until someone makes the folder by hand. We read the resolved
-    `location` of each external model from the dbt manifest (the source of truth,
-    so this stays correct as models are added) and mkdir its parent. Idempotent.
-
-    Callers must refresh the manifest (`dbt parse`) first so newly added models
-    are included.
+    Reads the resolved `location` of every external node from the manifest, so it
+    stays correct as models are added. Caller must `dbt parse` first.
     """
     log = _logger()
     if not MANIFEST.exists():
-        raise FileNotFoundError(
-            f"dbt manifest not found at {MANIFEST}; run `dbt parse` before ensuring dirs."
-        )
+        raise FileNotFoundError(f"dbt manifest not found at {MANIFEST}; run `dbt parse` first.")
 
     manifest = json.loads(MANIFEST.read_text())
     created: list[str] = []
-    seen: set[Path] = set()
     for node in manifest["nodes"].values():
-        config = node.get("config", {})
-        if config.get("materialized") != "external":
+        if node.get("config", {}).get("materialized") != "external":
             continue
-        location = config.get("location")
-        if not location:
-            continue
-        parent = Path(location).parent
-        if parent in seen:
-            continue
-        seen.add(parent)
-        if not parent.exists():
+        location = node["config"].get("location")
+        parent = Path(location).parent if location else None
+        if parent and not parent.exists():
             parent.mkdir(parents=True, exist_ok=True)
             created.append(str(parent))
 
-    if created:
-        log.info(f"Created {len(created)} external dir(s): {', '.join(sorted(created))}")
-    else:
-        log.info("External output dirs already present")
+    log.info(f"Created {len(created)} external dir(s)" if created else "External dirs present")
     return created
 
 
 @flow(name="dbt-build")
 def dbt_build(select: str | None = None):
-    """Run `dbt build` via PrefectDbtRunner.
-
-    The runner invokes dbt programmatically (not a subprocess), emitting a task run
-    and an asset per dbt node, so each model is observable with lineage in the Prefect UI.
-    """
+    """Run `dbt build` programmatically so each model is an observable Prefect asset."""
     runner = PrefectDbtRunner(settings=_settings)
-    # Refresh the manifest, then make sure every external output dir exists before
-    # any model tries to COPY into it.
     runner.invoke(["parse"])
     ensure_external_dirs()
 

@@ -4,7 +4,6 @@ with source as (
     select * from {{ source('ynab', 'budgets') }}
 ),
 
--- Bronze resnapshots every budget each run; keep the newest version of each budget.
 latest as (
     select *
     from source

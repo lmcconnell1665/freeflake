@@ -4,7 +4,6 @@ with source as (
     select * from {{ source('ynab', 'accounts') }}
 ),
 
--- Bronze accumulates one row per record per ingest run; keep the newest version of each account.
 -- Account ids are unique within a budget, so partition by budget + id.
 latest as (
     select *

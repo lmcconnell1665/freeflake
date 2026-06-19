@@ -4,16 +4,13 @@ with source as (
     select * from {{ source('ynab', 'category_months') }}
 ),
 
--- Bronze snapshots each changed month's categories per run (delta loads only
--- write months that changed); keep the newest version of each category-month.
 latest as (
     select *
     from source
     qualify row_number() over (partition by _budget_id, _month, id order by _ingested_at desc) = 1
 ),
 
--- The month's category row carries category_group_id but not the group name, so
--- join it from the groups model.
+-- Month category rows carry category_group_id but not the group name.
 groups as (
     select budget_id, category_group_id, category_group_name
     from {{ ref('silver_ynab__category_groups') }}
