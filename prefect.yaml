@@ -25,6 +25,6 @@ deployments:
     work_pool:
       name: freeflake-process-pool
     schedules:
-      - cron: "0 6 * * *"
+      - cron: "0 */2 * * *"
         timezone: America/New_York
         active: true
